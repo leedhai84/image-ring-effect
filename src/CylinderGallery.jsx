@@ -1,17 +1,16 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { motion, useMotionValue, useSpring } from 'framer-motion';
 
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-const RING_RADIUS = 880;    // Even wider
-const RING_TILT_DEG = 82;     // Flatter
-const PERSP = 2200;   // Higher
-const CARD_W = 90;
-const CARD_H = 160;    // Much taller
-const STACK_COUNT = 46;     // More dense
-const STACK_GAP_DEG = 0.8;    // Tighter
-const DRAG_FACTOR = 0.10;
-const DECAY = 0.95;
-const AUTO_SPEED = 0.04;
+// ── CONFIG (CYLINDER STACKED LOOK) ───────────────────────────────────────────
+const RING_RADIUS = '42vmin';
+const RING_TILT_DEG = 82;       // Flat look for cylinder effect
+const PERSP = 2400;
+const CARD_W = 70;              // Portrait width
+const CARD_H = 110;             // Portrait height
+const STACK_COUNT = 40;         // High density stacks for the ribbon effect
+const STACK_GAP_DEG = 0.8;      // Tight spacing for stacks
+const DRAG_FACTOR = 0.12;
+const DECAY = 0.98;
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
 const CATS = [
@@ -30,8 +29,8 @@ const CATS = [
     { name: 'Office', n: '34', seed: 130 },
     { name: 'Outdoor Retail', n: '33', seed: 140 },
 ];
-const N = CATS.length;
-const SLOT_DEG = 360 / N;
+const N_CATS = CATS.length;
+const SLOT_DEG = 360 / N_CATS;
 
 // ── 3D PROJECTION MATH ────────────────────────────────────────────────────────
 const DEG = Math.PI / 180;
@@ -41,129 +40,130 @@ const sinTilt = Math.sin(TILT);
 
 function computeTransform(angleDeg, spinDeg) {
     const phi = (angleDeg + spinDeg) * DEG;
-    // Raw cylinder point (upright Y=0)
-    const wx = RING_RADIUS * Math.sin(phi);
-    const wy = 0;
-    const wz = RING_RADIUS * Math.cos(phi);
+    const radiusPx = (parseFloat(RING_RADIUS) * Math.min(window.innerWidth, window.innerHeight)) / 100;
 
-    // Apply world tilt around X-axis
+    const wx = radiusPx * Math.sin(phi);
+    const wy = 0;
+    const wz = radiusPx * Math.cos(phi);
+
     const sy = wy * cosTilt - wz * sinTilt;
     const sz = wy * sinTilt + wz * cosTilt;
 
-    // Final Screen Projection
     const sc = PERSP / (PERSP - sz);
     const tx = wx * sc;
     const ty = sy * sc;
 
-    // Local card rotation to face outward + counter-tilt to stay vertical
     const cardRotY = (angleDeg + spinDeg);
     const cardRotX = -RING_TILT_DEG;
+    const baseScale = sc * 0.9;
+
+    // Opacity based on depth
+    const depthOpacity = Math.max(0.2, (sz / radiusPx + 1) * 0.5);
 
     return {
-        transform: `translate(-50%, -50%) translate(${tx}px, ${ty}px) rotateX(${cardRotX}deg) rotateY(${cardRotY}deg) scale(${sc * 0.9})`,
+        // ROTATION IS BACK: rotateX and rotateY create the cylinder curvature
+        transform: `translate(-50%, -50%) translate(${tx}px, ${ty}px) rotateX(${cardRotX}deg) rotateY(${cardRotY}deg) scale(${baseScale})`,
         screenX: tx,
         screenY: ty,
         z: sz,
-        sc
+        depthOpacity
     };
-}
-
-const ALL_IMAGES = [];
-for (let si = 0; si < N; si++) {
-    const half = ((STACK_COUNT - 1) / 2) * STACK_GAP_DEG;
-    for (let ji = 0; ji < STACK_COUNT; ji++) {
-        const angleDeg = si * SLOT_DEG - half + ji * STACK_GAP_DEG;
-        ALL_IMAGES.push({ key: `${si}-${ji}`, angleDeg, cat: CATS[si], ji });
-    }
 }
 
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export default function CylinderGallery() {
     const spinMV = useMotionValue(0);
-    const spinSpring = useSpring(spinMV, { stiffness: 40, damping: 20, mass: 1 });
+    const spinSpring = useSpring(spinMV, { stiffness: 45, damping: 25, mass: 1 });
 
     const spinRef = useRef(0);
-    const velRef = useRef(0);
-    const momentRef = useRef(null);
-    const autoRef = useRef(null);
+    const containerRef = useRef(null);
+    const labelsRef = useRef(null);
 
-    const [cards, setCards] = useState([]);
-    const [slotProjs, setSlotProjs] = useState([]);
     const [activeCat, setActive] = useState(0);
     const [isDragging, setDragging] = useState(false);
 
-    // Frame Loop
+    // STACKED DISTRIBUTION (Back to category groups)
+    const allImages = useMemo(() => {
+        const imgs = [];
+        for (let si = 0; si < N_CATS; si++) {
+            const half = ((STACK_COUNT - 1) / 2) * STACK_GAP_DEG;
+            for (let ji = 0; ji < STACK_COUNT; ji++) {
+                const angleDeg = si * SLOT_DEG - half + ji * STACK_GAP_DEG;
+                imgs.push({
+                    key: `stack-${si}-${ji}`,
+                    angleDeg,
+                    cat: CATS[si],
+                    ji
+                });
+            }
+        }
+        return imgs;
+    }, []);
+
     useEffect(() => {
         let id;
         const sync = () => {
             const spin = spinSpring.get();
+            const radiusPx = (parseFloat(RING_RADIUS) * Math.min(window.innerWidth, window.innerHeight)) / 100;
 
-            // Slot centers for labels
-            const sp = CATS.map((_, i) => computeTransform(i * SLOT_DEG, spin));
-            setSlotProjs(sp);
-
-            // Find active (closest to front)
             let maxZ = -Infinity, front = 0;
-            sp.forEach((p, i) => { if (p.z > maxZ) { maxZ = p.z; front = i; } });
-            setActive(front);
+            CATS.forEach((_, i) => {
+                const p = computeTransform(i * SLOT_DEG, spin);
+                if (p.z > maxZ) { maxZ = p.z; front = i; }
+            });
+            if (front !== activeCat) setActive(front);
 
-            // Batch compute all card positions
-            const computed = ALL_IMAGES.map(img => ({
-                ...img,
-                ...computeTransform(img.angleDeg, spin),
-            }));
+            if (containerRef.current) {
+                const els = Array.from(containerRef.current.children);
+                allImages.forEach((img, i) => {
+                    const el = els[i];
+                    if (!el) return;
+                    const p = computeTransform(img.angleDeg, spin);
 
-            // Sort by depth (Painter's Algorithm)
-            computed.sort((a, b) => a.z - b.z);
-            setCards(computed);
+                    if (p.z < -radiusPx * 1.5) {
+                        el.style.display = 'none';
+                    } else {
+                        el.style.display = 'block';
+                        el.style.transform = p.transform;
+                        el.style.zIndex = Math.round(p.z + 1000);
+                        el.style.opacity = p.depthOpacity;
+                    }
+                });
+            }
 
+            if (labelsRef.current) {
+                const labelEls = Array.from(labelsRef.current.children);
+                CATS.forEach((_, i) => {
+                    const el = labelEls[i];
+                    if (!el) return;
+                    const p = computeTransform(i * SLOT_DEG, spin);
+                    const hoverScale = (p.z / radiusPx + 1) * 0.5;
+                    const opacity = 0.2 + 0.8 * hoverScale;
+
+                    el.style.transform = `translate(calc(-50% + ${p.screenX * 1.15}px), calc(-50% + ${p.screenY * 1.35}px))`;
+                    el.style.opacity = isNaN(opacity) ? 0.2 : opacity;
+
+                    if (i === front) el.classList.add('label-active');
+                    else el.classList.remove('label-active');
+                });
+            }
             id = requestAnimationFrame(sync);
         };
         id = requestAnimationFrame(sync);
         return () => cancelAnimationFrame(id);
-    }, [spinSpring]);
+    }, [spinSpring, allImages, activeCat]);
 
-    // Auto rotation
-    useEffect(() => {
-        const tick = () => {
-            if (!isDragging) {
-                spinRef.current += AUTO_SPEED;
-                spinMV.set(spinRef.current);
-            }
-            autoRef.current = requestAnimationFrame(tick);
-        };
-        autoRef.current = requestAnimationFrame(tick);
-        return () => cancelAnimationFrame(autoRef.current);
-    }, [spinMV, isDragging]);
-
-    const stopMoment = useCallback(() => { cancelAnimationFrame(momentRef.current); }, []);
-
-    const onDragStart = useCallback(() => { stopMoment(); setDragging(true); }, [stopMoment]);
-
+    const onDragStart = useCallback(() => { setDragging(true); }, []);
     const onDrag = useCallback((_, info) => {
         spinRef.current += info.delta.x * DRAG_FACTOR;
         spinMV.set(spinRef.current);
-        velRef.current = info.velocity.x;
     }, [spinMV]);
+    const onDragEnd = useCallback(() => { setDragging(false); }, []);
 
-    const onDragEnd = useCallback(() => {
-        setDragging(false);
-        let v = velRef.current * DRAG_FACTOR * 0.4;
-        const tick = () => {
-            if (Math.abs(v) < 0.02) return;
-            spinRef.current += v;
-            spinMV.set(spinRef.current);
-            v *= DECAY;
-            momentRef.current = requestAnimationFrame(tick);
-        };
-        momentRef.current = requestAnimationFrame(tick);
-    }, [spinMV]);
-
-    const cat = CATS[activeCat];
+    const activeCatData = CATS[activeCat];
 
     return (
         <div className="root">
-            {/* GLOBAL NAV */}
             <nav className="top-nav">
                 <div className="nav-left">
                     <span className="nav-active">Projects</span>
@@ -172,60 +172,34 @@ export default function CylinderGallery() {
                 </div>
             </nav>
 
-            {/* 3D INTERACTION STAGE */}
             <motion.div
                 className="scene"
-                drag="x"
-                dragElastic={0}
-                onDragStart={onDragStart}
-                onDrag={onDrag}
-                onDragEnd={onDragEnd}
+                onPanStart={onDragStart}
+                onPan={onDrag}
+                onPanEnd={onDragEnd}
                 style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             >
-                {/* THE RING */}
-                <div className="ring-container">
-                    {cards.map(card => (
+                <div className="ring-container" ref={containerRef}>
+                    {allImages.map(img => (
                         <img
-                            key={card.key}
-                            src={`https://picsum.photos/seed/${card.cat.seed + card.ji}/200/300`}
-                            width={CARD_W}
-                            height={CARD_H}
+                            key={img.key}
+                            src={`https://picsum.photos/seed/${img.cat.seed + img.ji}/200/300`}
                             alt=""
                             draggable={false}
                             className="ring-img"
-                            style={{ transform: card.transform, zIndex: Math.round(card.z + 1000) }}
+                            style={{ width: CARD_W, height: CARD_H }}
                         />
                     ))}
                 </div>
 
-                {/* LABELS FOLLOW THE ELLIPSE */}
-                <div className="labels-layer">
-                    {CATS.map((c, i) => {
-                        const p = slotProjs[i];
-                        if (!p) return null;
-
-                        // Adjust label position to be outside the ring arc
-                        const hoverScale = (p.z / RING_RADIUS + 1) * 0.5; // (0 to 1 range)
-                        const opacity = 0.2 + 0.8 * hoverScale;
-                        const isCenter = i === activeCat;
-
-                        return (
-                            <div
-                                key={i}
-                                className={`label ${isCenter ? 'label-active' : ''}`}
-                                style={{
-                                    transform: `translate(calc(-50% + ${p.screenX * 1.12}px), calc(-50% + ${p.screenY * 1.3}px))`,
-                                    opacity: opacity,
-                                    transformOrigin: 'center'
-                                }}
-                            >
-                                {c.name}<sup className="sup-index">({c.n})</sup>
-                            </div>
-                        );
-                    })}
+                <div className="labels-layer" ref={labelsRef}>
+                    {CATS.map((c, i) => (
+                        <div key={i} className="label">
+                            {c.name}<sup className="sup-index">({c.n})</sup>
+                        </div>
+                    ))}
                 </div>
 
-                {/* CENTER FEATURE (The focal point) */}
                 <div className="feature-overlay">
                     <motion.div
                         key={activeCat}
@@ -233,19 +207,16 @@ export default function CylinderGallery() {
                         animate={{ opacity: 1, scale: 1 }}
                         className="feature-wrap"
                     >
-                        <h1 className="feature-title">Jianling Yuan<br />Shijiazhuang</h1>
+                        <h1 className="feature-title">Tianfu Sihe Sky Park<br />Community</h1>
                         <div className="feature-img-box">
-                            <img src={`https://picsum.photos/seed/${cat.seed + 10}/800/450`} alt="" />
+                            <img src={`https://picsum.photos/seed/${activeCatData.seed + 10}/800/450`} alt="" />
                         </div>
-                        <p className="feature-caption">High Rise</p>
+                        <p className="feature-caption">{activeCatData.name}</p>
                     </motion.div>
                 </div>
             </motion.div>
 
-            {/* FOOTER CONTROLS / HINT */}
-            <div className="hint-footer">
-                Drag to explore
-            </div>
+            <div className="hint-footer">Drag to explore</div>
         </div>
     );
 }
