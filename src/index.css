@@ -69,15 +69,31 @@ body {
   height: 0;
 }
 
-.ring-img {
+.ring-item {
   position: absolute;
   top: 0;
   left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+  /* overflow: hidden; */ /* Optional: if you want to clip the box shadow */
+}
+
+.ring-img {
   object-fit: cover;
   border-radius: 1px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
   background: #222;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  pointer-events: none; /* Let the wrapper handle the mouse events */
+}
+
+.ring-item-hovered .ring-img {
+  transform: scale(1.6);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+  z-index: 2000;
 }
 
 /* ── LABELS ────────────────────────────────────────────────────────────────── */
@@ -127,8 +143,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   text-align: center;
-  gap: 35px;
 }
 
 .feature-title {
@@ -139,11 +155,12 @@ body {
 }
 
 .feature-img-box {
-  width: 480px;
-  height: 270px;
+  width: 520px;
+  height: 292px; /* 16:9 ratio */
   overflow: hidden;
-  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
-  background: #222;
+  box-shadow: 0 50px 100px rgba(0, 0, 0, 0.8);
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .feature-img-box img {

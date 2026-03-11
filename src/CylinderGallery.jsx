@@ -7,8 +7,7 @@ const RING_TILT_DEG = 82;       // Flat look for cylinder effect
 const PERSP = 2400;
 const CARD_W = 70;              // Portrait width
 const CARD_H = 110;             // Portrait height
-const STACK_COUNT = 40;         // High density stacks for the ribbon effect
-const STACK_GAP_DEG = 0.8;      // Tight spacing for stacks
+const TOTAL_IMAGES = 80;        // Increased to 80 images as requested
 const DRAG_FACTOR = 0.12;
 const DECAY = 0.98;
 
@@ -81,21 +80,22 @@ export default function CylinderGallery() {
 
     const [activeCat, setActive] = useState(0);
     const [isDragging, setDragging] = useState(false);
+    const [hoveredIndex, setHoveredIndex] = useState(null);
 
-    // STACKED DISTRIBUTION (Back to category groups)
+    // UNIFORM DISTRIBUTION (Evenly spaced around the ring)
     const allImages = useMemo(() => {
         const imgs = [];
-        for (let si = 0; si < N_CATS; si++) {
-            const half = ((STACK_COUNT - 1) / 2) * STACK_GAP_DEG;
-            for (let ji = 0; ji < STACK_COUNT; ji++) {
-                const angleDeg = si * SLOT_DEG - half + ji * STACK_GAP_DEG;
-                imgs.push({
-                    key: `stack-${si}-${ji}`,
-                    angleDeg,
-                    cat: CATS[si],
-                    ji
-                });
-            }
+        const gap = 360 / TOTAL_IMAGES;
+        for (let i = 0; i < TOTAL_IMAGES; i++) {
+            const angleDeg = i * gap;
+            // Map each image to a category for the central preview seed
+            const catIndex = Math.floor((i / TOTAL_IMAGES) * N_CATS);
+            imgs.push({
+                key: `img-${i}`,
+                angleDeg,
+                cat: CATS[catIndex],
+                index: i
+            });
         }
         return imgs;
     }, []);
@@ -106,12 +106,52 @@ export default function CylinderGallery() {
             const spin = spinSpring.get();
             const radiusPx = (parseFloat(RING_RADIUS) * Math.min(window.innerWidth, window.innerHeight)) / 100;
 
-            let maxZ = -Infinity, front = 0;
-            CATS.forEach((_, i) => {
-                const p = computeTransform(i * SLOT_DEG, spin);
-                if (p.z > maxZ) { maxZ = p.z; front = i; }
+            let maxZ = -Infinity;
+            let currentFocalImg = null;
+
+            // Find which actual image is closest to the front (max Z)
+            allImages.forEach((img) => {
+                const p = computeTransform(img.angleDeg, spin);
+                if (p.z > maxZ) {
+                    maxZ = p.z;
+                    currentFocalImg = img;
+                }
             });
+
+            // Determine which image to show and which category is active
+            const displayImg = hoveredIndex !== null ? allImages[hoveredIndex] : currentFocalImg;
+            const front = CATS.findIndex(c => c.name === displayImg.cat.name);
+
             if (front !== activeCat) setActive(front);
+
+            // Direct DOM update for the focal center image to achieve "stop-motion" instant swaps
+            const focalWrapEl = document.getElementById('focal-wrap');
+            const focalImgEl = document.getElementById('focal-image');
+            const captionEl = document.getElementById('focal-caption');
+            
+            if (focalWrapEl) {
+                // Show if hovered OR if dragging (to maintain frame-by-frame feel)
+                if (hoveredIndex === null && !isDragging) {
+                    focalWrapEl.style.opacity = '0';
+                    focalWrapEl.style.visibility = 'hidden';
+                } else {
+                    focalWrapEl.style.opacity = '1';
+                    focalWrapEl.style.visibility = 'visible';
+                    
+                    const activeImg = hoveredIndex !== null ? allImages[hoveredIndex] : currentFocalImg;
+                    if (activeImg) {
+                        const newSrc = `https://picsum.photos/seed/${activeImg.cat.seed + activeImg.index}/800/450`;
+                        const newCaption = activeImg.cat.name;
+
+                        if (focalImgEl && focalImgEl.getAttribute('src') !== newSrc) {
+                            focalImgEl.setAttribute('src', newSrc);
+                        }
+                        if (captionEl && captionEl.innerText !== newCaption) {
+                            captionEl.innerText = newCaption;
+                        }
+                    }
+                }
+            }
 
             if (containerRef.current) {
                 const els = Array.from(containerRef.current.children);
@@ -120,13 +160,18 @@ export default function CylinderGallery() {
                     if (!el) return;
                     const p = computeTransform(img.angleDeg, spin);
 
-                    if (p.z < -radiusPx * 1.5) {
+                    if (p.z < -radiusPx * 2.5) { // Relax burial threshold to avoid gaps
                         el.style.display = 'none';
                     } else {
                         el.style.display = 'block';
                         el.style.transform = p.transform;
                         el.style.zIndex = Math.round(p.z + 1000);
                         el.style.opacity = p.depthOpacity;
+                    }
+
+                    // Apply active focus styling to the specific ring item being hovered
+                    if (hoveredIndex === i) {
+                        el.style.zIndex = "2000"; // Bring to top
                     }
                 });
             }
@@ -151,11 +196,19 @@ export default function CylinderGallery() {
         };
         id = requestAnimationFrame(sync);
         return () => cancelAnimationFrame(id);
-    }, [spinSpring, allImages, activeCat]);
+    }, [spinSpring, allImages, activeCat, hoveredIndex]);
 
     const onDragStart = useCallback(() => { setDragging(true); }, []);
-    const onDrag = useCallback((_, info) => {
-        spinRef.current += info.delta.x * DRAG_FACTOR;
+    const onDrag = useCallback((e, info) => {
+        // Lấy tọa độ Y của chuột/tay từ sự kiện
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY) || info.point.y;
+        const screenMidY = window.innerHeight / 2;
+        
+        // Nếu kéo ở nửa dưới màn hình (y > screenMidY), đảo ngược hướng xoay delta.x
+        // Điều này tạo cảm giác tự nhiên khi xoay một vòng tròn 3D
+        const multiplier = clientY > screenMidY ? -1 : 1;
+        
+        spinRef.current += info.delta.x * DRAG_FACTOR * multiplier;
         spinMV.set(spinRef.current);
     }, [spinMV]);
     const onDragEnd = useCallback(() => { setDragging(false); }, []);
@@ -180,15 +233,22 @@ export default function CylinderGallery() {
                 style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             >
                 <div className="ring-container" ref={containerRef}>
-                    {allImages.map(img => (
-                        <img
+                    {allImages.map((img, idx) => (
+                        <div
                             key={img.key}
-                            src={`https://picsum.photos/seed/${img.cat.seed + img.ji}/200/300`}
-                            alt=""
-                            draggable={false}
-                            className="ring-img"
-                            style={{ width: CARD_W, height: CARD_H }}
-                        />
+                            className={`ring-item ${hoveredIndex === idx ? 'ring-item-hovered' : ''}`}
+                            onMouseEnter={() => setHoveredIndex(idx)}
+                            onMouseLeave={() => setHoveredIndex(null)}
+                            style={{ width: CARD_W + 8, height: CARD_H + 8 }}
+                        >
+                            <img
+                                src={`https://picsum.photos/seed/${img.cat.seed + img.index}/200/300`}
+                                alt=""
+                                draggable={false}
+                                className="ring-img"
+                                style={{ width: CARD_W, height: CARD_H }}
+                            />
+                        </div>
                     ))}
                 </div>
 
@@ -201,18 +261,15 @@ export default function CylinderGallery() {
                 </div>
 
                 <div className="feature-overlay">
-                    <motion.div
-                        key={activeCat}
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="feature-wrap"
-                    >
-                        <h1 className="feature-title">Tianfu Sihe Sky Park<br />Community</h1>
+                    <div id="focal-wrap" className="feature-wrap" style={{ opacity: 0, visibility: 'hidden', transition: 'opacity 0.2s, visibility 0.2s' }}>
                         <div className="feature-img-box">
-                            <img src={`https://picsum.photos/seed/${activeCatData.seed + 10}/800/450`} alt="" />
+                            <img 
+                                id="focal-image"
+                                src="" 
+                                alt="" 
+                            />
                         </div>
-                        <p className="feature-caption">{activeCatData.name}</p>
-                    </motion.div>
+                    </div>
                 </div>
             </motion.div>
 
