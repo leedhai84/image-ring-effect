@@ -5,9 +5,9 @@ import { motion, useMotionValue, useSpring } from 'framer-motion';
 const RING_RADIUS = '42vmin';
 const RING_TILT_DEG = 82;       // Flat look for cylinder effect
 const PERSP = 2400;
-const CARD_W = 70;              // Portrait width
-const CARD_H = 110;             // Portrait height
-const TOTAL_IMAGES = 80;        // Increased to 80 images as requested
+const CARD_W = 88;              // Portrait width (+25% from 70)
+const CARD_H = 138;             // Portrait height (+25% from 110)
+const TOTAL_IMAGES = 102;       // Increased by 27% from 80
 const DRAG_FACTOR = 0.12;
 const DECAY = 0.98;
 
@@ -72,7 +72,7 @@ function computeTransform(angleDeg, spinDeg) {
 // ── COMPONENT ─────────────────────────────────────────────────────────────────
 export default function CylinderGallery() {
     const spinMV = useMotionValue(0);
-    const spinSpring = useSpring(spinMV, { stiffness: 45, damping: 25, mass: 1 });
+    const spinSpring = useSpring(spinMV, { stiffness: 120, damping: 40, mass: 1 });
 
     const spinRef = useRef(0);
     const containerRef = useRef(null);
@@ -103,6 +103,8 @@ export default function CylinderGallery() {
     useEffect(() => {
         let id;
         const sync = () => {
+            // Reverted to spinSpring.get() to restore the spring feel you like,
+            // while keeping high stiffness for better responsiveness.
             const spin = spinSpring.get();
             const radiusPx = (parseFloat(RING_RADIUS) * Math.min(window.innerWidth, window.innerHeight)) / 100;
 
@@ -126,6 +128,7 @@ export default function CylinderGallery() {
 
             // Direct DOM update for the focal center image to achieve "stop-motion" instant swaps
             const focalWrapEl = document.getElementById('focal-wrap');
+            const focalTextEl = document.getElementById('focal-text');
             const focalImgEl = document.getElementById('focal-image');
             const captionEl = document.getElementById('focal-caption');
             
@@ -134,9 +137,17 @@ export default function CylinderGallery() {
                 if (hoveredIndex === null && !isDragging) {
                     focalWrapEl.style.opacity = '0';
                     focalWrapEl.style.visibility = 'hidden';
+                    if (focalTextEl) {
+                        focalTextEl.style.opacity = '1';
+                        focalTextEl.style.visibility = 'visible';
+                    }
                 } else {
                     focalWrapEl.style.opacity = '1';
                     focalWrapEl.style.visibility = 'visible';
+                    if (focalTextEl) {
+                        focalTextEl.style.opacity = '0';
+                        focalTextEl.style.visibility = 'hidden';
+                    }
                     
                     const activeImg = hoveredIndex !== null ? allImages[hoveredIndex] : currentFocalImg;
                     if (activeImg) {
@@ -196,7 +207,7 @@ export default function CylinderGallery() {
         };
         id = requestAnimationFrame(sync);
         return () => cancelAnimationFrame(id);
-    }, [spinSpring, allImages, activeCat, hoveredIndex]);
+    }, [spinSpring, allImages, activeCat, hoveredIndex, isDragging]);
 
     const onDragStart = useCallback(() => { setDragging(true); }, []);
     const onDrag = useCallback((e, info) => {
@@ -261,6 +272,16 @@ export default function CylinderGallery() {
                 </div>
 
                 <div className="feature-overlay">
+                    <div id="focal-text" className="focal-placeholder-text">
+                        <p>Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s</p>
+                        <button 
+                            className="view-projects-btn" 
+                            onClick={() => window.open('https://github.com/leedhai84/image-ring-effect', '_blank')}
+                            style={{ pointerEvents: 'auto' }}
+                        >
+                            VIEW PROJECTS
+                        </button>
+                    </div>
                     <div id="focal-wrap" className="feature-wrap" style={{ opacity: 0, visibility: 'hidden', transition: 'opacity 0.2s, visibility 0.2s' }}>
                         <div className="feature-img-box">
                             <img 
